@@ -11,21 +11,8 @@ import 'package:share_plus/share_plus.dart';
 import 'package:screenshot/screenshot.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-
-// Firebase yapılandırmasının yapılmış olduğu varsayılıyor.
-// Gerçek projede 'flutterfire configure' ile oluşturulan options kullanılır.
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // Firebase Initialize (Web ve Mobil için try-catch ile güvenli başlatma)
-  try {
-    await Firebase.initializeApp();
-  } catch (e) {
-    debugPrint("Firebase Başlatma Hatası (Yapılandırma eksik olabilir): $e");
-  }
 
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -56,127 +43,7 @@ class ParkCepteApp extends StatelessWidget {
           type: BottomNavigationBarType.fixed,
         ),
       ),
-      // Auth Kapısı: Kullanıcı giriş yaptıysa doğrudan MainScreen'e, yapmadıysa LoginScreen'e
-      home: StreamBuilder<User?>(
-        stream: FirebaseAuth.instance.authStateChanges(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Scaffold(body: Center(child: CircularProgressIndicator()));
-          }
-          if (snapshot.hasData) {
-            return const MainScreen();
-          }
-          return const AuthScreen();
-        },
-      ),
-    );
-  }
-}
-
-// ============================================ //
-// YENİ: HIZLI KAYIT / GİRİŞ EKRANI (Auth)      //
-// ============================================ //
-class AuthScreen extends StatelessWidget {
-  const AuthScreen({Key? key}) : super(key: key);
-
-  // Misafir Girişi (Test için hızlı geçiş)
-  Future<void> _signInAnonymously() async {
-    try {
-      await FirebaseAuth.instance.signInAnonymously();
-    } catch (e) {
-      debugPrint("Giriş Hatası: $e");
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 30),
-        width: double.infinity,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // Logo Alanı
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFF39FF14).withOpacity(0.1),
-                border: Border.all(color: const Color(0xFF39FF14), width: 2),
-              ),
-              child: const Icon(Icons.local_parking, size: 80, color: Color(0xFF39FF14)),
-            ),
-            const SizedBox(height: 30),
-            const Text(
-              'PARKCEPTE',
-              style: TextStyle(
-                fontSize: 36,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 4.0,
-                color: Colors.white,
-              ),
-            ),
-            const Text(
-              'Akıllı Park Asistanınız',
-              style: TextStyle(color: Colors.white54, fontSize: 16, letterSpacing: 1.0),
-            ),
-            const SizedBox(height: 80),
-            
-            // Google/Apple tarzı hızlı butonlar
-            _buildQuickAuthButton(
-              icon: Icons.g_mobiledata, 
-              text: "Google ile Devam Et", 
-              bgColor: Colors.white, 
-              textColor: Colors.black,
-              onPressed: _signInAnonymously, // Ömür boyu erişim demosu için anonim giriş
-            ),
-            const SizedBox(height: 15),
-            _buildQuickAuthButton(
-              icon: Icons.apple, 
-              text: "Apple ile Devam Et", 
-              bgColor: const Color(0xFF0A1024), 
-              textColor: Colors.white,
-              onPressed: _signInAnonymously,
-            ),
-            const SizedBox(height: 30),
-            TextButton(
-              onPressed: _signInAnonymously,
-              child: const Text(
-                'Şimdilik Misafir Olarak Göz At',
-                style: TextStyle(color: Color(0xFF39FF14), fontWeight: FontWeight.bold),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildQuickAuthButton({
-    required IconData icon, 
-    required String text, 
-    required Color bgColor, 
-    required Color textColor,
-    required VoidCallback onPressed,
-  }) {
-    return SizedBox(
-      width: double.infinity,
-      height: 55,
-      child: ElevatedButton.icon(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: bgColor,
-          foregroundColor: textColor,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-          elevation: 0,
-        ),
-        onPressed: onPressed,
-        icon: Icon(icon, size: 28),
-        label: Text(
-          text,
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-        ),
-      ),
+      home: const MainScreen(),
     );
   }
 }
@@ -301,8 +168,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       CurvedAnimation(parent: _blinkController, curve: Curves.easeInOut),
     );
 
-    // Uygulama açıldığında Firestore'dan kaydedilmiş park yerini getir
-    _fetchParkingFromFirestore();
   }
 
   @override
@@ -310,48 +175,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _timer?.cancel();
     _blinkController.dispose();
     super.dispose();
-  }
-
-  // Firestore'dan veri çekme (Persistence)
-  Future<void> _fetchParkingFromFirestore() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-
-    try {
-      final doc = await FirebaseFirestore.instance.collection('parkings').doc(user.uid).get();
-      if (doc.exists && doc.data() != null) {
-        final data = doc.data()!;
-        if (data['parked_location'] != null) {
-          setState(() {
-            parkedLocation = data['parked_location'];
-            _latitude = data['latitude'];
-            _longitude = data['longitude'];
-            
-            // Kalan süreyi hesapla (Test amaçlı 3 saat başlatır)
-            _startTimer();
-          });
-        }
-      }
-    } catch (e) {
-      debugPrint("Firestore Veri Çekme Hatası: $e");
-    }
-  }
-
-  // Firestore'a veri yazma (Synchronization)
-  Future<void> _syncToFirestore() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-
-    try {
-      await FirebaseFirestore.instance.collection('parkings').doc(user.uid).set({
-        'parked_location': parkedLocation,
-        'latitude': _latitude,
-        'longitude': _longitude,
-        'updated_at': FieldValue.serverTimestamp(),
-      });
-    } catch (e) {
-      debugPrint("Firestore Eşitleme Hatası: $e");
-    }
   }
 
   Future<void> _determinePosition() async {
@@ -373,8 +196,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         _latitude = position.latitude;
         _longitude = position.longitude;
       });
-      // Konum alındıktan sonra buluta işle
-      _syncToFirestore();
     } catch (e) {
       debugPrint("Konum Alma Hatası: $e");
     }
@@ -402,8 +223,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       _latitude = null;
       _longitude = null;
     });
-    // Buluttan da sil/sıfırla
-    _syncToFirestore();
   }
 
   Color get _currentColor {
@@ -492,8 +311,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                       parkedLocation = '$tempLetter - $tempNumber\n$tempColor';
                     });
                     _startTimer();
-                    _syncToFirestore(); // Firestore güncelle
-                    await _determinePosition(); // GPS al ve Firestore güncelle
+                    await _determinePosition();
                   },
                   child: const Text('Konumu Kaydet', style: TextStyle(color: Colors.black, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.0)),
                 ),
@@ -554,12 +372,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     const SizedBox(height: 30),
                     Padding(padding: const EdgeInsets.symmetric(horizontal: 40), child: GestureDetector(onTap: _shareParkingInfo, child: Container(height: 60, width: double.infinity, decoration: BoxDecoration(color: const Color(0xFF39FF14), borderRadius: BorderRadius.circular(20), boxShadow: [BoxShadow(color: const Color(0xFF39FF14).withOpacity(0.4), blurRadius: 20, spreadRadius: 2)]), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: const [Icon(Icons.location_on, color: Colors.black, size: 28), SizedBox(width: 12), Text("Konumu ve Yer Bilgisini Paylaş", style: TextStyle(color: Colors.black, fontSize: 15, fontWeight: FontWeight.bold, letterSpacing: 0.5))])))),
                     const SizedBox(height: 20),
-                    // Çıkış Butonu
-                    TextButton.icon(
-                      onPressed: () => FirebaseAuth.instance.signOut(), 
-                      icon: const Icon(Icons.logout, color: Colors.white30), 
-                      label: const Text("Çıkış Yap", style: TextStyle(color: Colors.white30))
-                    ),
                   ]
                 ],
               ),
